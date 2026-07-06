@@ -1,5 +1,7 @@
 """Generation: build a grounded prompt from retrieved chunks and ask the LLM
 for an answer with inline numbered citations."""
+from collections.abc import Iterator
+
 from docsrag.config import settings
 from docsrag.llm import get_client
 from docsrag.models import Chunk
@@ -40,3 +42,40 @@ def generate_answer(question: str, k: int = 5) -> tuple[str, list[Chunk]]:
   answer = response.choices[0].message.content
   return answer, chunks
 
+def stream_events(question: str, k: int = 5) -> Iterator[dict]:
+    """Yield the answer as a stream of events: one 'sources', many 'token', one 'done'.
+
+    Generator (note `yield`): each item is produced lazily as the LLM emits it,
+    so the caller can forward tokens to the client in real time. ≈ IAsyncEnumerable<T>.
+    """
+
+    chunks = retrieve(question, k)
+
+    # 1) Tell the client which sources are in context, up front.
+    yield {
+       "type": "sources",
+       "sources": [
+          {"n": i, "source": c.source, "position": c.position}
+          for i, c in enumerate(chunks, start=1)
+       ],
+    }
+
+    # 2) Stream the model's answer token-by-token.
+    messages = [
+       {"role": "system", "content": SYSTEM_PROMPT},
+       {"role": "user", "content": f"Context passages:\n\n{format_context(chunks)}\n\nQuestion: {question}"},
+    ] 
+    stream = get_client().chat.completions.create(
+       model=settings.llm_model,
+       messages=messages,
+       temperature=0.0,
+       stream=True,
+    )
+
+    for part in stream:
+       delta = part.choices[0].delta.content
+       if delta:
+          yield {"type": "token", "text": delta}
+    
+    # 3) Signal completion.
+    yield {"type": "done"}
