@@ -1,0 +1,50 @@
+[
+  {
+    "question": "How do I declare a path parameter in FastAPI?",
+    "expected": "Declare it in the path using Python format-string syntax with curly braces, e.g. /items/{item_id}, and add a matching function parameter with a type annotation."
+  },
+  {
+    "question": "How do I give a query parameter a default value?",
+    "expected": "Add a function parameter that is not part of the path and assign it a default value, e.g. skip: int = 0; FastAPI treats it as an optional query parameter."
+  },
+  {
+    "question": "How do I make a query parameter optional?",
+    "expected": "Give it a default value of None (optionally typing it as str | None or Optional[str])."
+  },
+  {
+    "question": "How do I add a maximum length validation to a query parameter?",
+    "expected": "Use Query as the default, e.g. q: str | None = Query(default=None, max_length=50)."
+  },
+  {
+    "question": "How do I receive a JSON request body?",
+    "expected": "Declare a parameter whose type is a Pydantic BaseModel; FastAPI reads the request body as JSON and validates it into that model."
+  },
+  {
+    "question": "How do I set a specific HTTP status code for a successful response?",
+    "expected": "Pass status_code to the path operation decorator, e.g. @app.post('/items/', status_code=201)."
+  },
+  {
+    "question": "How do I return an HTTP error to the client?",
+    "expected": "Raise HTTPException with a status_code and detail, e.g. raise HTTPException(status_code=404, detail='Item not found')."
+  },
+  {
+    "question": "How do I validate that a path parameter is greater than zero?",
+    "expected": "Use Path with a numeric constraint such as gt=0, e.g. item_id: int = Path(gt=0)."
+  },
+  {
+    "question": "How do I control which fields are returned in the response?",
+    "expected": "Declare response_model on the path operation with a Pydantic model; FastAPI filters the output to that model's fields (useful to omit fields like passwords)."
+  },
+  {
+    "question": "How do I declare a cookie parameter?",
+    "expected": "Use Cookie as the default value of a function parameter, e.g. ads_id: str | None = Cookie(default=None)."
+  },
+  {
+    "question": "How do I declare a header parameter?",
+    "expected": "Use Header as the default value of a function parameter, e.g. user_agent: str | None = Header(default=None)."
+  },
+  {
+    "question": "How do I add metadata or validation to a Pydantic model's fields?",
+    "expected": "Use Field from pydantic inside the model, e.g. price: float = Field(gt=0, description='...')."
+  }
+]
