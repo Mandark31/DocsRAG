@@ -20,6 +20,14 @@ def ensure_collection() -> None:
     vectors_config = VectorParams(size=EMBED_DIM, distance=Distance.COSINE)
   )
 
+def reset_collection() -> None:
+    """Drop the collection if it exists, then recreate it empty.
+
+    Makes ingest a clean full rebuild — no orphaned points when content changes.
+    """
+    _client().delete_collection(settings.qdrant_collection)
+    ensure_collection()
+
 def upsert_chunks(chunks: list[Chunk], vectors: list[list[float]]) -> int:
   points = [
     PointStruct(id=chunk.id, vector = vector, payload = chunk.model_dump())
