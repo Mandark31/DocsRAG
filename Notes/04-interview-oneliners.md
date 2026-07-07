@@ -1,4 +1,4 @@
-# DocsRAG — Interview One-Liners (through Phase 3)
+# DocsRAG — Interview One-Liners (through Phase 4)
 
 > Skim this before an interview. Just the load-bearing framings — the sentences that, said cleanly, prove you understand the _why_. Full reasoning lives in the other three docs.
 
@@ -132,8 +132,20 @@
 - "`event_stream` is a closure — it captures `request` and stays valid when Starlette iterates it after the handler returns. ≈ a C# local function."
 - "A `for` loop ends when the iterator raises `StopIteration` — for the LLM stream, that fires when the SDK sees Groq's `[DONE]` sentinel. No length involved; the producer signals done."
 
+## Eval harness / LLM-as-judge (Phase 4)
+
+- "The eval turns 'I think it works' into a repeatable measurement — run each golden question through the real pipeline, have an LLM judge the answer against a human-written reference."
+- **"An LLM judge over keyword matching because I'm grading _meaning, not string similarity_ — keyword matching fails correct answers worded differently AND passes wrong answers that contain the right tokens. It can't detect negation."**
+- **"Same model generates and judges — that's a real limitation (self-bias, shared blind spots). I concede it, then: verification is narrower than generation, the human references anchor it, and the fix is a different/stronger judge model — trivial via my provider-agnostic layer."**
+- **"What it proves: end-to-end correctness. What it doesn't: _which_ stage failed (system-level, not component-level), and with 12 questions it's a smoke test — 11/12 isn't a real 92%, it's a directional signal."**
+- "An eval that honestly states its scope beats one quoting a confident number it can't support."
+- **"My proudest property — 'refuses rather than hallucinates' — is currently untested. The highest-value addition is out-of-scope golden questions expecting 'I don't know', which closes the loop: prompt instructs refusal → eval verifies it."**
+- "To diagnose the failing stage I'd add a retrieval-only eval keyed on expected source file — checkable mechanically, no judge needed."
+- "`temperature=0` on the judge too — a flaky judge makes a flaky harness."
+- "`@pytest.mark.parametrize` makes each golden case an independent test — all run even if some fail, and failures name the exact question. Beats a loop that stops at the first failure."
+
 ---
 
 ## The three things I wrote by hand (and why)
 
-- `retrieve()` (Phase 2 ✅), the streaming `/ask` endpoint (Phase 3 ✅), the LLM-judge prompt (Phase 4, next) — implemented myself to internalize retrieval flow, streaming/async, and eval design rather than auto-generating them.
+- `retrieve()` (Phase 2 ✅), the streaming `/ask` endpoint (Phase 3 ✅), the LLM-judge prompt (Phase 4 ✅) — implemented myself to internalize retrieval flow, streaming/async, and eval design rather than auto-generating them. All five phases build-complete; Phase 5 is polish.

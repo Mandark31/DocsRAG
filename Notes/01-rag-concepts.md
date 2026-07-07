@@ -1,7 +1,7 @@
-# DocsRAG — RAG Concepts (through Phase 3)
+# DocsRAG — RAG Concepts (through Phase 4)
 
 > Personal study notes. Goal: be able to defend every concept cold in an interview.
-> Scope: everything conceptual we've covered building DocsRAG — ingestion (P1), retrieval + generation (P2), streaming API (P3).
+> Scope: everything conceptual we've covered building DocsRAG — ingestion (P1), retrieval + generation (P2), streaming API (P3), eval harness (P4).
 
 ---
 
@@ -265,3 +265,48 @@ In Phase 2, sources came as a footer _after_ the full answer. Streaming breaks t
 **Retrieved vs. used (honest limitation):** the sources event currently lists _all `k` retrieved_ passages, not only the ones the answer actually _cited_. For a citation system the ideal is "show what was used." Interim fix: name it "retrieved passages," or later parse which `[n]` markers actually appear in the answer and filter to those. Owning this gap (and naming the mechanism to fix it) is the senior move.
 
 (The transport-level details — SSE vs WebSocket, POST, sync-vs-async streaming — live in the architecture doc.)
+
+---
+
+## 13. Evaluation — the eval harness (Phase 4)
+
+The second headline differentiator (alongside citations). Turns "I think it works" into "here's a repeatable measurement."
+
+### What "LLM-as-judge" is
+
+For each golden Q&A pair: run the question through the real pipeline → get an answer → ask an LLM to grade that answer against a **human-written reference** ("PASS if factually consistent, FAIL if it contradicts / misses the key point / is wrong"). The judge is a _fuzzy-matching mechanism_ against curated truth.
+
+### Why an LLM judge, not keyword/substring matching
+
+You're grading **semantic correctness, not string similarity.** Keyword matching fails in _both directions_:
+
+- **False FAIL** — a correct answer using different words ("wrap the name in braces") contains none of the expected literal tokens → a right answer fails.
+- **False PASS** — a wrong answer that happens to contain the right tokens ("you do NOT use curly braces") passes a substring check. **Keyword matching can't detect negation/contradiction** because it reads presence, not meaning.
+  The LLM judge grades _meaning_, which is the entire point. Deliberately calibrated to PASS on different wording / extra detail / omitted code, FAIL only on contradiction / missing key point / wrong.
+
+### What a passing eval PROVES — and its two limits
+
+- **Proves:** end-to-end answer correctness — retrieval found relevant chunks AND generation produced a correct grounded answer — against a human-curated set.
+- **Limit 1 — system-level, not component-level.** A failure doesn't tell you _whether_ it was a retrieval miss (wrong chunks) or a generation miss (right chunks, bad answer). No per-stage diagnostic.
+- **Limit 2 — small sample.** 12 questions = smoke-test size. Catches regressions and proves the concept; **not** enough for statistical confidence. "11/12 = 92%" is a directional signal, NOT a quotable accuracy number.
+- **Senior instinct:** an eval that honestly states its scope beats one quoting a confident number it can't support.
+
+### The self-grading circularity critique (THE question)
+
+Same model generates _and_ judges → risk of self-bias + shared blind spots. **Concede it openly.** Why it still works, and the fix:
+
+1. **Verification is narrower than generation** — the judge has the reference in hand, doing comparison not open-ended recall. (Same reason reviewing a PR is easier than writing it.)
+2. **The golden references are the anchor** — the judge grades against _human-written truth_, not in a vacuum; that constrains what "correct" means even given model blind spots.
+3. **Fix:** use a _different, ideally stronger_ judge model than the generator — breaks the loop. The provider-agnostic layer makes this a config change.
+   > Posture: concede → explain → name the fix. That's what separates "I understand LLM-as-judge" from "I copied a tutorial."
+
+### The untested safety property (the highest-value gap)
+
+The golden set is 12 _answerable_ questions. The property we're proudest of — **"it refuses rather than hallucinates"** — is **untested**. No case where the answer isn't in the docs and expected behavior is "I don't know." This closes the Phase 2 loop: _prompt instructs refusal → eval must verify it._
+
+- **Why highest-value:** refusal is the _safety property_; its failure mode (confident hallucination) is exactly what erodes trust. An untested safety property is worse than an untested feature.
+- **Subtlety:** refusal cases need their own judge rubric — "correct refusal = PASS, confident fabrication = FAIL" — which is a _different_ rubric than "matches the reference technique." A judge told to check "same core technique" may get confused when the correct behavior is _declining to state a technique_.
+
+### How you'd make it diagnose the failing stage (follow-up)
+
+Add a **retrieval-only eval** keyed on expected source file: "did the right source doc appear in top-k?" — checkable _mechanically_, no LLM judge needed, because you know each golden answer's source. That isolates retrieval quality from generation quality (and is where the discarded retrieval **score** + stored **source metadata** would earn their keep).

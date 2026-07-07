@@ -1,4 +1,4 @@
-# DocsRAG — Architecture & Project Decisions (through Phase 3)
+# DocsRAG — Architecture & Project Decisions (through Phase 4)
 
 > Personal study notes. Every decision here should be defensible cold.
 > These are the _architectural_ choices (the "why we built it this way"), separate from RAG theory and Python mechanics.
@@ -196,13 +196,38 @@ The endpoint is `def ask` (sync), and `stream_events` / `event_stream` are **syn
 
 ---
 
+## 9. Eval harness design (Phase 4)
+
+### The shape
+
+`golden_qa.json` (human-curated Q&A pairs) + `test_eval.py` (pytest, LLM-as-judge). Each pair: run the real pipeline → judge the answer against the reference → PASS/FAIL. (Concepts in RAG doc §13.)
+
+### Key design decisions
+
+- **`@pytest.mark.parametrize` — one test per golden case** (≈ xUnit `[Theory]`+`[MemberData]`), not a loop inside one test. Independent pass/fail per case; **all cases run even when some fail**; `ids=[question]` labels each run with its actual question so a red test names _which_ question broke. A loop would stop at the first failure and hide the rest.
+- **`temperature=0.0` on the judge** — same reproducibility reason as the pipeline. A flaky judge = a flaky harness. Deterministic judge → run-to-run reproducible eval.
+- **Judge rubric calibrated for semantics** — PASS on different wording / extra detail / omitted code; FAIL only on contradiction / missing key point / wrong. This is _why_ an LLM judge over keyword matching (which fails correct-but-differently-worded answers AND passes wrong answers containing the right tokens — can't detect negation).
+- **Rich failure message** — prints question, expected, actual, judge verdict → lets you eyeball whether the _judge_ was wrong vs. the _system_ was wrong. Debuggability is the point of an eval.
+
+### The self-grading tradeoff (design-level)
+
+Generator and judge are the same model (`settings.llm_model`) → self-bias risk. **Chosen for simplicity in a portfolio project**, with a known upgrade path: a different/stronger judge model, which the **provider-agnostic layer makes a config change**. (Full concede→explain→fix in RAG doc §13.) The mitigation being trivial is a direct payoff of the §2 provider-agnostic design.
+
+### Cost/scale note
+
+Each run = N generate + N judge calls (12+12=24 here), serial. Fine at this scale; at scale you'd cache generations / batch judges. Explains why big evals get slow/expensive.
+
+---
+
 ## Phase status
 
 - **Phase 0 ✅** — scaffold: uv, Docker/Qdrant, typed config, FastAPI `/health`, Groq smoke test.
 - **Phase 1 ✅** — ingestion: per-file chunking, local bge-small embeddings, Qdrant upsert with deterministic IDs, search CLI verified (`"declare a path parameter"` → top-5 all from `path-params*.md`, top score 0.8357).
 - **Phase 2 ✅** — retrieval + generation (non-streaming, console): `retrieve()`, grounded prompt + citation stitching in `generate.py`, `ask.py` CLI prints answer + Sources. Citation numbering aligned (same ordered list in prompt + footer).
 - **Phase 3 ✅** — streaming API: `POST /ask` SSE endpoint, `stream_events()` typed-event generator (`sources`/`token`/`done`), sync generator in Starlette threadpool. `curl` streams a cited answer.
-- **Three pieces written by hand (learning goals):** `retrieve()` (P2 ✅), streaming `/ask` (P3 ✅), LLM-judge prompt (P4, next).
+- **Phase 4 ✅** — eval harness: `golden_qa.json` (12 pairs) + `test_eval.py` (pytest, parametrized, LLM-as-judge, temperature 0). Prints per-question PASS/FAIL with rich diagnostics.
+- **Three pieces written by hand (learning goals):** `retrieve()` (P2 ✅), streaming `/ask` (P3 ✅), LLM-judge prompt (P4 ✅).
+- **Next:** Phase 5 — polish (work the backlog below + README + refusal test).
 
 ### Known gaps / hardening backlog (mostly Phase 5)
 
@@ -215,3 +240,8 @@ The endpoint is `def ask` (sync), and `stream_events` / `event_stream` are **syn
 - **Prompt duplication** between `generate_answer` and `stream_events` — extract `_build_messages()`.
 - **Mixed indentation** (2-space old code, 4-space new) — run `ruff format` / `black` (also fixes PEP 8 → 4-space).
 - **Stale docstring** in `api.py` ("Phase 0: health check only").
+- **[P4] No refusal test** — highest-value gap: the "refuses rather than hallucinates" safety property is untested. Add 1–2 out-of-scope golden questions expecting "I don't know," with a refusal-specific judge rubric.
+- **[P4] `.strip()` on possibly-`None`** in `judge()` — same bug pattern as `generate.py`; guard `(content or "").strip()`.
+- **[P4] `None` answer flows into judge** — a `None` from `generate_answer` becomes the literal string "None" and gets graded; should be an explicit FAIL with a clear reason.
+- **[P4, stretch] Component-level eval** — retrieval-only check keyed on expected source file, to isolate retrieval misses from generation misses.
+- **[P4, stretch] Stronger/different judge model** — breaks the self-grading loop; trivial via the provider-agnostic layer.

@@ -1,4 +1,4 @@
-# DocsRAG — Python & Programming Concepts (through Phase 3)
+# DocsRAG — Python & Programming Concepts (through Phase 4)
 
 > Personal study notes for a .NET dev learning Python/FastAPI.
 > C#/.NET analogies included where they genuinely fit; concept stated directly first.
@@ -223,3 +223,66 @@ For the **LLM stream** specifically, `stream` wraps the **open network connectio
 - Restart infra: `docker compose up -d` (data persists in the `qdrant_storage` volume).
 - Ask (non-streaming CLI, P2): `PYTHONPATH=src uv run python -m docsrag.ask "your question"` → answer + Sources footer.
 - Ask (streaming API, P3): `POST /ask` with JSON `{"question": "...", "k": 5}` → SSE stream of `sources`/`token`/`done` events. Verify with `curl -N` (the `-N`/`--no-buffer` flag is what lets you _see_ it stream rather than buffering the whole response).
+
+---
+
+## 13. pytest — testing, for a .NET dev (Phase 4)
+
+### Convention-based, not attribute-based
+
+Biggest surprise from xUnit: pytest **discovers** tests by naming, no `[Fact]` needed.
+
+- `test_*.py` files → test files.
+- `test_*` functions → test cases.
+- `Test*` classes → test classes.
+  Naming **is** the registration. `judge()` (not `test_`-prefixed) is ignored as a test → it's just a helper. Run with `uv run pytest` (or `PYTHONPATH=src uv run pytest` for the src layout) ≈ `dotnet test`.
+
+### Plain `assert`, no assertion library
+
+`assert <condition>, "<message if it fails>"` — Python's built-in keyword, not `Assert.Equal(...)`. pytest **rewrites** asserts so failures show the actual values (rich diff), so you get xUnit-quality output from a language keyword. `assert answer == expected` prints both on failure.
+
+### `@pytest.mark.parametrize` — the one decorator (≈ `[Theory]`+`[MemberData]`)
+
+```python
+@pytest.mark.parametrize("case", GOLDEN, ids=[c["question"] for c in GOLDEN])
+def test_answer_is_correct(case):
+    ...
+```
+
+- `"case"` = **name of the injected parameter**; matches the function arg `def ...(case)`.
+- `GOLDEN` = **list of values** → the test runs once per item.
+- `ids=[...]` = **human-readable label per run** → failures name the actual question (without it: `[case0]`, `[case1]`…, useless).
+- One function definition → **12 independent tests.** All run even if some fail; independent pass/fail. Beats a `for` loop inside one test (which stops at the first failure and hides the rest).
+- **Injection model (pytest's signature feature):** _you_ never pass `case`; the function _declares_ a parameter and pytest _supplies_ it. Same mechanism powers **fixtures** (pytest's DI for setup — ≈ constructor injection / `IClassFixture`): declare a parameter, pytest matches it to a data source or setup function by name. (Not used yet, but now it won't surprise you.)
+
+### File-path & data-loading idioms
+
+```python
+GOLDEN = json.loads((Path(__file__).parent / "golden_qa.json").read_text())
+```
+
+- Runs **once at import time** (module level).
+- `__file__` = path to this source file. `Path(...)` = `pathlib.Path` (≈ richer `FileInfo`).
+- `.parent` = the containing directory.
+- `/ "golden_qa.json"` = `pathlib` overloads `/` as **path-join** (not division) when the left side is a `Path`.
+- **Why not bare `open("golden_qa.json")`:** a bare filename is relative to _where you ran pytest from_, not the test file. `Path(__file__).parent / ...` anchors to the test file's own location → works from any CWD. Kills "works here, not there" path bugs.
+- `.read_text()` = whole file → string. `json.loads(...)` = parse JSON string → Python objects (`loads` = "load string"; array → `list` of `dict`).
+
+### Small Python idioms in this file
+
+- **Tuple return + unpack:** `judge` returns `(passed, verdict)`; caller does `passed, verdict = judge(...)`. Lightweight multi-return (vs C# out-params / a small class).
+- **`_` throwaway:** `answer, _ = generate_answer(...)` — `_` = "I don't need this value" (the chunks).
+- **List comprehension:** `[c["question"] for c in GOLDEN]` = `[expression for item in iterable]` — compact "build a list by looping."
+- **Adjacent-string / f-string concatenation:** stacked `f"\n..."` literals with no `+` auto-join into one string; each `\n` = newline for readable multi-line failure output.
+
+### Mental map
+
+| This file                        | xUnit                                      |
+| -------------------------------- | ------------------------------------------ |
+| `test_*.py` file / `test_*` func | `[Fact]` / `[Test]`                        |
+| `@pytest.mark.parametrize`       | `[Theory]` + `[MemberData]`/`[InlineData]` |
+| `assert passed, "msg"`           | `Assert.True(passed, "msg")`               |
+| `case` param filled by pytest    | params from `[MemberData]`                 |
+| non-`test_` helper (`judge`)     | private helper method                      |
+| fixtures (not used yet)          | ctor injection / `IClassFixture`           |
+| `uv run pytest`                  | `dotnet test`                              |
