@@ -2,8 +2,7 @@
 for an answer with inline numbered citations."""
 from collections.abc import Iterator
 
-from docsrag.config import settings
-from docsrag.llm import get_client
+from docsrag.llm import chat
 from docsrag.models import Chunk
 from docsrag.retrieval import retrieve
 
@@ -31,13 +30,12 @@ def generate_answer(question: str, k: int = 5) -> tuple[str, list[Chunk]]:
 
   user_prompt = f"Context passages:\n\n{context}\n\nQuestion: {question}"
 
-  response = get_client().chat.completions.create(
-    model=settings.llm_model,
-    messages=[
-      {"role": "system", "content": SYSTEM_PROMPT},
-      {"role": "user", "content": user_prompt},
-    ],
-    temperature=0.0
+  response = chat(
+     [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+     ],
+     temperature=0.0
   )
   answer = response.choices[0].message.content
   return answer, chunks
@@ -65,12 +63,8 @@ def stream_events(question: str, k: int = 5) -> Iterator[dict]:
        {"role": "system", "content": SYSTEM_PROMPT},
        {"role": "user", "content": f"Context passages:\n\n{format_context(chunks)}\n\nQuestion: {question}"},
     ] 
-    stream = get_client().chat.completions.create(
-       model=settings.llm_model,
-       messages=messages,
-       temperature=0.0,
-       stream=True,
-    )
+
+    stream = chat(messages, temperature=0.0, stream=True)
 
     for part in stream:
        delta = part.choices[0].delta.content
