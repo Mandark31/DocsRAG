@@ -1,0 +1,9 @@
+# Keep the build context small and secrets out of the image.
+.venv/
+.git/
+.gitignore
+__pycache__/
+*.py[oc]
+.pytest_cache/
+.env
+Notes/

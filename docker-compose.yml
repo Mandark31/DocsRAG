@@ -8,5 +8,18 @@ services:
     volumes:
       - qdrant_storage:/qdrant/storage   # persists data across restarts
 
+  app:
+    build: .
+    container_name: docsrag-app
+    depends_on:
+      - qdrant
+    env_file: .env            # GROQ_API_KEY etc.
+    environment:
+      # Reach Qdrant by its compose service name on the internal network,
+      # overriding the localhost default from config.
+      - QDRANT_URL=http://qdrant:6333
+    ports:
+      - "8000:8000"
+
 volumes:
   qdrant_storage:
