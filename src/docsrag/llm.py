@@ -13,7 +13,7 @@ from docsrag.config import settings
 @lru_cache(maxsize = 1)
 def get_client() -> OpenAI:
   """One OpenAI-compatible client per process (lazy singleton)."""
-  return OpenAI(api_key=settings.groq_api_key, base_url=settings.llm_base_url)
+  return OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
 
 @retry(
       retry=retry_if_exception_type((APIConnectionError, RateLimitError)),

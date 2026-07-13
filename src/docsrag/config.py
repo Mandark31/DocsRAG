@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # LLM (OpenAI-compatible interface; Groq by default)
-    groq_api_key: str
+    llm_api_key: str
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_model: str = "llama-3.3-70b-versatile"
     llm_model_fallback: str = "llama-3.1-8b-instant"

@@ -55,7 +55,7 @@ This is the **Adapter / anti-corruption layer** pattern — Dependency Inversion
 
 ## 3. Fail-fast typed config
 
-`config.py` uses pydantic-settings: reads env vars / `.env`, **validates types at construction**, throws immediately if a required value (e.g. `GROQ_API_KEY`) is missing/malformed. Nowhere else does stringly-typed env reading; everything goes through one typed object.
+`config.py` uses pydantic-settings: reads env vars / `.env`, **validates types at construction**, throws immediately if a required value (e.g. `LLM_API_KEY`) is missing/malformed. Nowhere else does stringly-typed env reading; everything goes through one typed object.
 
 ### Why timing matters (the senior point)
 
@@ -235,7 +235,7 @@ Each run = N generate + N judge calls (12+12=24 here), serial. Fine at this scal
 - **`part.choices[0]` can IndexError** — some final chunks carry `choices: []`. Guard: `if part.choices and part.choices[0].delta.content`.
 - **Sources = retrieved, not used** — footer lists all `k`, not only cited passages.
 - **Sync streaming caps concurrency** at ~threadpool size (see §8). Async is the upgrade.
-- **Provider-agnostic naming leak** — `settings.groq_api_key` should be `llm_api_key` to match the generic `llm_base_url` and back the provider-agnostic claim.
+- **Provider-agnostic naming leak** — `settings.llm_api_key` should be `llm_api_key` to match the generic `llm_base_url` and back the provider-agnostic claim.
 - **`answer` typed `str` but can be `None`** in non-streaming path — guard `content or ""`.
 - **Prompt duplication** between `generate_answer` and `stream_events` — extract `_build_messages()`.
 - **Mixed indentation** (2-space old code, 4-space new) — run `ruff format` / `black` (also fixes PEP 8 → 4-space).

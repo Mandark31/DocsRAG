@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from openai import OpenAI
 from docsrag.config import settings
 
-client = OpenAI(api_key=settings.groq_api_key, base_url=settings.llm_base_url)
+client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
 
 resp = client.chat.completions.create(
     model=settings.llm_model,

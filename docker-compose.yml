@@ -3,17 +3,17 @@ services:
     image: qdrant/qdrant:latest
     container_name: docsrag-qdrant
     ports:
-      - "6333:6333"   # REST API + web dashboard
-      - "6334:6334"   # gRPC (faster client protocol)
+      - "6333:6333" # REST API + web dashboard
+      - "6334:6334" # gRPC (faster client protocol)
     volumes:
-      - qdrant_storage:/qdrant/storage   # persists data across restarts
+      - qdrant_storage:/qdrant/storage # persists data across restarts
 
   app:
     build: .
     container_name: docsrag-app
     depends_on:
       - qdrant
-    env_file: .env            # GROQ_API_KEY etc.
+    env_file: .env # LLM_API_KEY etc.
     environment:
       # Reach Qdrant by its compose service name on the internal network,
       # overriding the localhost default from config.

@@ -55,11 +55,11 @@ The choices worth defending, straight from the build:
 | Config                | pydantic-settings, fail-fast at startup                   | A missing/malformed key throws at process start, before accepting connections — turning a production incident into a failed deployment the orchestrator can roll back.                                                                                      |
 | Re-ingestion          | Deterministic `uuid5` IDs + upsert                        | Same content → same ID → upsert overwrites in place. Re-running ingestion keeps the point count stable instead of duplicating.                                                                                                                              |
 | Project layout        | `src/` package layout                                     | Forces importing the package by name, the way installed code must — catches the "works locally, missing after install" class of packaging bug.                                                                                                              |
-| Citations             | Numbered context `[n]` → Sources footer                   | Chunk position in the prompt is the citation index; returning chunks in that order makes attribution deterministic with no parsing of model output.                                                                                                          |
-| Eval                  | LLM-judge + accuracy threshold (pytest)                   | Generation isn't reproducible, so semantic grading beats string matching. The judge prompt must state the pass criterion explicitly or it over-fails correct paraphrases. A threshold (≥0.9) catches regressions without brittle per-case asserts.           |
-| LLM resilience        | tenacity retries (backoff) on transient errors            | Rate-limits / connection blips retry with exponential backoff (3 attempts); non-transient errors fail fast. All calls route through one retried `chat()` helper.                                                                                             |
-| Markdown cleaning     | Strip doc-build macros at ingest                          | FastAPI docs embed `{* ... *}` include macros — noise for retrieval. Cleaning the data once is more robust than hoping the model ignores it.                                                                                                                  |
-| Containerization      | App + Qdrant via Docker Compose                            | Containerize the dependency you set once (Qdrant) and the app itself, so `docker compose up --build` is a one-command bring-up. In dev you can still run the app native with `--reload` for a fast loop.                                                       |
+| Citations             | Numbered context `[n]` → Sources footer                   | Chunk position in the prompt is the citation index; returning chunks in that order makes attribution deterministic with no parsing of model output.                                                                                                         |
+| Eval                  | LLM-judge + accuracy threshold (pytest)                   | Generation isn't reproducible, so semantic grading beats string matching. The judge prompt must state the pass criterion explicitly or it over-fails correct paraphrases. A threshold (≥0.9) catches regressions without brittle per-case asserts.          |
+| LLM resilience        | tenacity retries (backoff) on transient errors            | Rate-limits / connection blips retry with exponential backoff (3 attempts); non-transient errors fail fast. All calls route through one retried `chat()` helper.                                                                                            |
+| Markdown cleaning     | Strip doc-build macros at ingest                          | FastAPI docs embed `{* ... *}` include macros — noise for retrieval. Cleaning the data once is more robust than hoping the model ignores it.                                                                                                                |
+| Containerization      | App + Qdrant via Docker Compose                           | Containerize the dependency you set once (Qdrant) and the app itself, so `docker compose up --build` is a one-command bring-up. In dev you can still run the app native with `--reload` for a fast loop.                                                    |
 
 More detail lives in [`Notes/`](./Notes) — study notes on RAG concepts, architecture decisions, and Python mechanics.
 
@@ -88,7 +88,7 @@ git clone https://github.com/Mandark31/DocsRAG.git
 cd DocsRAG
 
 # environment
-cp .env.example .env        # add your GROQ_API_KEY
+cp .env.example .env        # add your LLM_API_KEY
 
 # dependencies (uv creates the venv and installs from uv.lock)
 uv sync
@@ -126,7 +126,7 @@ Qdrant's dashboard is at `http://localhost:6333/dashboard` — useful for confir
 ### Run everything in Docker
 
 ```bash
-cp .env.example .env          # add your GROQ_API_KEY
+cp .env.example .env          # add your LLM_API_KEY
 docker compose up --build     # starts the app (:8000) and Qdrant together
 docker compose run --rm app docsrag-ingest   # ingest into the containerized Qdrant
 ```
