@@ -1,4 +1,4 @@
-# DocsRAG — Architecture & Project Decisions (through Phase 4)
+# DocsRAG — Architecture & Project Decisions (through Phase 5 — build complete)
 
 > Personal study notes. Every decision here should be defensible cold.
 > These are the _architectural_ choices (the "why we built it this way"), separate from RAG theory and Python mechanics.
@@ -55,7 +55,7 @@ This is the **Adapter / anti-corruption layer** pattern — Dependency Inversion
 
 ## 3. Fail-fast typed config
 
-`config.py` uses pydantic-settings: reads env vars / `.env`, **validates types at construction**, throws immediately if a required value (e.g. `LLM_API_KEY`) is missing/malformed. Nowhere else does stringly-typed env reading; everything goes through one typed object.
+`config.py` uses pydantic-settings: reads env vars / `.env`, **validates types at construction**, throws immediately if a required value (e.g. `GROQ_API_KEY`) is missing/malformed. Nowhere else does stringly-typed env reading; everything goes through one typed object.
 
 ### Why timing matters (the senior point)
 
@@ -124,8 +124,10 @@ Two mechanisms **combined**:
 1. **Deterministic `uuid5` IDs** — same chunk content/source always computes to the **same ID**.
 2. **Upsert** = update-or-insert: if the ID exists, **overwrite in place**; else insert.
 
-> Pairing: same content → same ID → upsert overwrites rather than inserts. That's why 138 chunks stay 138 across re-runs, not 414.
+> Pairing: same `filename:position` → same ID → upsert overwrites rather than inserts. That's why re-running ingest doesn't duplicate points.
 > Deterministic IDs alone do nothing — it's the _pairing_ (a stable ID for upsert to match against) that de-duplicates. The idempotent collection setup is hygiene; **upsert + deterministic IDs** is what actually prevents duplicate vectors.
+>
+> ⚠️ **CORRECTION (found in Phase 5):** the ID is `uuid5(NAMESPACE_URL, f"{filename}:{position}")` — keyed on **filename + position, NOT content**. And upsert prevents _duplicates_ but does **not garbage-collect orphans** when the chunk set shrinks. Superseded by `reset_collection()` — see §10.
 
 ---
 
@@ -219,29 +221,163 @@ Each run = N generate + N judge calls (12+12=24 here), serial. Fine at this scal
 
 ---
 
+## 10. Resilience — tenacity retries (Phase 5)
+
+All LLM calls route through one retried `chat()` helper in `llm.py` (preserves the §2 provider-agnostic rule — retries defined once, applied everywhere).
+
+### The policy, and why each knob
+
+```python
+@retry(
+    retry=retry_if_exception_type((APIConnectionError, RateLimitError)),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    stop=stop_after_attempt(3),
+    reraise=True,
+)
+```
+
+- **Retry only _transient_ failures.** `APIConnectionError` (blip) / `RateLimitError` (429) are **recoverable** — the same request a second later usually succeeds. A `BadRequestError`, bad API key, or bad model slug is **permanent** — it fails _identically_ every attempt, so retrying wastes time, adds load, and delays the inevitable error. **Retrying a permanent error is a bug.**
+- **Exponential backoff** (1s → 2s → 4s, capped 10s). Hammering a rate-limited service makes the rate-limiting _worse_; backing off gives it room to recover. (At scale, add **jitter** so many simultaneous failures don't retry in lockstep — the thundering-herd problem.)
+- **`stop_after_attempt(3)`** — don't retry forever; surface the failure eventually.
+- **`reraise=True`** — by default tenacity wraps the final failure in its own `RetryError`. This re-raises the **original** exception, so callers see the real `RateLimitError`, not a tenacity wrapper. Prevents leaking the retry abstraction.
+- **Idempotency:** retries assume the op is safe to repeat. An LLM completion is (worst case: two calls, no corrupted state). Ops with side effects (charge a card, send an email) would be dangerous to retry blindly.
+
+**≈ Polly** in .NET (retry policies + exponential backoff), with a decorator instead of a policy builder.
+
+### The retry ↔ streaming boundary (ties to §8)
+
+`chat()` wraps the call that **creates** the stream. With `stream=True`, `.create()` opens the connection and returns the stream object; **token iteration happens later**, in `stream_events`'s `for part in stream` loop — **outside** the decorated function.
+
+- ✅ Retry **protects establishing the stream** — a blip/429 _before the first token_ is retried; the user sees nothing.
+- ❌ Retry does **NOT** cover mid-iteration failure (connection drops after token 3) — that exception is raised inside the `for` loop, outside `chat()`, and propagates uncaught.
+
+> **Retry to establish; error-event to fail gracefully once committed.** The retry _complements_ the still-open mid-stream `error` event — it doesn't replace it. (Retrying mid-stream would re-emit tokens the client already displayed → garbled output.)
+
+---
+
+## 11. Deployment — full containerization (Phase 5)
+
+### "Containerized" ≠ "everything in one container"
+
+**The unit of containerization is one process / one service**, not "one app." You get two containers (app + Qdrant), orchestrated by Compose into **one command** (`docker compose up --build`). The "one command, works anywhere" promise is delivered _by_ Compose orchestrating N containers — not by cramming services together.
+
+**Why two, not one:**
+
+- **Different software, different lifecycles** — Qdrant is a pre-built official image (never rebuilt); the app is code that changes constantly (rebuilt often). One image would mean rebuilding a database every time you edit a line of Python.
+- **Independent restart/deploy** — ship new app code without bouncing the DB.
+- **Independent scaling** — run 3 app containers against 1 Qdrant. Impossible if the DB is welded into the app image (you'd get 3 separate databases).
+- **Different persistence** — Qdrant needs a volume; the app is stateless and freely disposable.
+- **One container = one main process** — running two needs a process supervisor, interleaved logs, murky health checks. You'd be badly reinventing Compose.
+
+> Rule of thumb: **containerize each service; orchestrate them together.**
+
+### Container networking — `localhost` is relative
+
+**`localhost` (127.0.0.1) always means "the machine this process runs on."** That machine is _different_ depending on who says it:
+
+- **Your Mac** says `localhost:6333` → looks on the Mac.
+- **Code inside the app container** says `localhost:6333` → looks **inside the app container**, where nothing is running → connection refused. Each container has its own private, isolated localhost.
+
+**Dev (app native):** app on Mac → `localhost:6333` → the `6333:6333` **port mapping** → into the Qdrant container. The mapping is the _only_ reason this worked.
+**Compose (app containerized):** the app is no longer on the Mac, so that path is gone. Compose puts services on a **shared private network with DNS keyed by service name** — the hostname `qdrant` resolves to the Qdrant container's IP. Hence `QDRANT_URL=http://qdrant:6333`.
+
+**Why names, not IPs:** Docker assigns container IPs dynamically and they change between runs. **Service-name DNS gives a stable address.** (Same pattern as Kubernetes service names — Compose is the small-scale version.)
+
+### Port mapping syntax
+
+```
+HOST_PORT : CONTAINER_PORT
+   6333   :      6333        ← your Mac : inside the container
+```
+
+The **right side is fixed by the software** (Qdrant serves on 6333; uvicorn on 8000). The **left side is yours to choose** — `7777:6333` would serve the dashboard at `localhost:7777` on your Mac. Matching numbers is convention, not a requirement.
+
+**Port publishing is for reaching _in from your Mac_; the internal Compose network is for containers reaching _each other_.** App→Qdrant traffic uses the network (by service name), not the published ports.
+
+### `0.0.0.0` binding (a classic gotcha)
+
+uvicorn binds `0.0.0.0:8000`, **not** `localhost:8000`. Binding to `localhost` _inside_ a container means only accepting connections originating _inside that same container_ — external traffic via the port mapping would be refused. `0.0.0.0` = "accept on all interfaces," which is what makes the container reachable.
+
+---
+
+## 12. Config precedence & 12-factor (Phase 5)
+
+**Nothing in the code hardcodes a URL.** `vectorstore.py` reads `settings.qdrant_url`; `config.py` declares it with a default of `http://localhost:6333`.
+
+**pydantic-settings resolves by priority (highest wins):**
+
+1. **Environment variables** ← highest
+2. `.env` file values
+3. The class default ← lowest
+
+- **Native run:** no `QDRANT_URL` env var → falls through to the `localhost` default → port mapping → Qdrant. ✅
+- **Compose run:** the app service sets `QDRANT_URL=http://qdrant:6333` as an **env var**, which outranks everything → `settings.qdrant_url` becomes the service-name URL. `vectorstore.py` **never changed a line.** ✅
+
+> **12-factor:** config comes from the _environment_, not from code — so **one unchanged artifact** runs correctly in dev, Compose, staging, or prod. Same principle as the §2 provider-agnostic layer (`base_url` from config), applied to a different dependency. ≈ .NET env-var overrides beating `appsettings.json`, bound to a typed options object.
+
+### The `.env` ambiguity (known, works, worth tightening)
+
+`.env` sets `QDRANT_URL=http://localhost:6333` **and** Compose sets `QDRANT_URL=http://qdrant:6333` via `environment:`. **Compose's explicit `environment:` beats `env_file:`**, so the container gets the right value (proven: containerized ingest wrote 124 points).
+
+**Why tighten it anyway:** correctness depends on the reader knowing that precedence rule — it _reads_ like a conflict, and there are two stacked precedence systems (Compose's, then pydantic's).
+
+**The clean split:**
+
+- **`.env` = who you are** (secrets/provider): `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, `QDRANT_COLLECTION`, `EMBED_MODEL`.
+- **Deployment topology = where you're running:** `QDRANT_URL` — drop it from `.env`, keep `localhost` as the `config.py` default, let Compose's `environment:` override it. One value, one override point, no conflict.
+
+---
+
+## 13. Packaging — console scripts (Phase 5)
+
+`[build-system]` (hatchling) + `[project.scripts]` entry points:
+
+```toml
+docsrag-ingest = "docsrag.ingest:main"
+docsrag-search = "docsrag.search:main"
+docsrag-ask    = "docsrag.ask:main"
+```
+
+The package now **installs properly**, so `PYTHONPATH=src` is **gone** — the Phase 1 loose end, finally closed. `uv run docsrag-ask "..."` just works. This is the src-layout story completing: declare the package location → build/install it → import by name, no path hacks. (≈ a `dotnet tool` / console entry point.)
+
+---
+
 ## Phase status
 
 - **Phase 0 ✅** — scaffold: uv, Docker/Qdrant, typed config, FastAPI `/health`, Groq smoke test.
 - **Phase 1 ✅** — ingestion: per-file chunking, local bge-small embeddings, Qdrant upsert with deterministic IDs, search CLI verified (`"declare a path parameter"` → top-5 all from `path-params*.md`, top score 0.8357).
 - **Phase 2 ✅** — retrieval + generation (non-streaming, console): `retrieve()`, grounded prompt + citation stitching in `generate.py`, `ask.py` CLI prints answer + Sources. Citation numbering aligned (same ordered list in prompt + footer).
 - **Phase 3 ✅** — streaming API: `POST /ask` SSE endpoint, `stream_events()` typed-event generator (`sources`/`token`/`done`), sync generator in Starlette threadpool. `curl` streams a cited answer.
-- **Phase 4 ✅** — eval harness: `golden_qa.json` (12 pairs) + `test_eval.py` (pytest, parametrized, LLM-as-judge, temperature 0). Prints per-question PASS/FAIL with rich diagnostics.
+- **Phase 4 ✅** — eval harness: `golden_qa.json` (12 pairs) + `test_eval.py` (pytest, parametrized, LLM-as-judge, temperature 0). Prints per-question PASS/FAIL with rich diagnostics. **Live lesson:** the judge prompt initially lacked an explicit _criterion_ → 4 false FAILs on correct paraphrases. Adding "PASS if factually consistent, ignore wording/extra detail, FAIL only if contradicts/misses key point" → 12/12. Judge discrimination verified (a deliberately wrong answer → FAIL with reason), proving it's not a rubber stamp.
+- **Phase 5 ✅ — PROJECT BUILD-COMPLETE** — `.gitignore`; ingest macro-cleaning + `reset_collection` (138 → 124 chunks); tenacity retries + eval accuracy threshold (≥0.9); `[build-system]` + console scripts (`PYTHONPATH=src` gone); README rewritten (architecture, mermaid, decisions table, roadmap); **app containerized** (Dockerfile py3.12-slim + uv; compose `app` service, `depends_on: qdrant`, `QDRANT_URL` override, `8000:8000`). Verified: `docker compose up --build` → containerized ingest (124 pts), `/health` 200, `/ask` streams cited SSE end-to-end.
 - **Three pieces written by hand (learning goals):** `retrieve()` (P2 ✅), streaming `/ask` (P3 ✅), LLM-judge prompt (P4 ✅).
-- **Next:** Phase 5 — polish (work the backlog below + README + refusal test).
+- **Eval:** 12/12 (P4) → **11/12 (P5)** — the eval _caught a regression_ from the pipeline change (recall gap on rephrased queries). See RAG doc §14: lead with this.
 
-### Known gaps / hardening backlog (mostly Phase 5)
+### Hardening backlog — honest status (post-Phase 5)
 
-- **No mid-stream error handling** — LLM error after streaming starts propagates out of the generator, SSE socket dies, client can't distinguish clean completion from failure. Fix: 4th event type `error` from a `try/except` inside the generator.
-- **`part.choices[0]` can IndexError** — some final chunks carry `choices: []`. Guard: `if part.choices and part.choices[0].delta.content`.
-- **Sources = retrieved, not used** — footer lists all `k`, not only cited passages.
-- **Sync streaming caps concurrency** at ~threadpool size (see §8). Async is the upgrade.
-- **Provider-agnostic naming leak** — `settings.llm_api_key` should be `llm_api_key` to match the generic `llm_base_url` and back the provider-agnostic claim.
-- **`answer` typed `str` but can be `None`** in non-streaming path — guard `content or ""`.
-- **Prompt duplication** between `generate_answer` and `stream_events` — extract `_build_messages()`.
-- **Mixed indentation** (2-space old code, 4-space new) — run `ruff format` / `black` (also fixes PEP 8 → 4-space).
-- **Stale docstring** in `api.py` ("Phase 0: health check only").
-- **[P4] No refusal test** — highest-value gap: the "refuses rather than hallucinates" safety property is untested. Add 1–2 out-of-scope golden questions expecting "I don't know," with a refusal-specific judge rubric.
-- **[P4] `.strip()` on possibly-`None`** in `judge()` — same bug pattern as `generate.py`; guard `(content or "").strip()`.
-- **[P4] `None` answer flows into judge** — a `None` from `generate_answer` becomes the literal string "None" and gets graded; should be an explicit FAIL with a clear reason.
-- **[P4, stretch] Component-level eval** — retrieval-only check keyed on expected source file, to isolate retrieval misses from generation misses.
-- **[P4, stretch] Stronger/different judge model** — breaks the self-grading loop; trivial via the provider-agnostic layer.
+**✅ Done in Phase 5**
+
+- tenacity retries on LLM calls (transient-only, backoff, `reraise`) — §10.
+- Ingest macro-cleaning (`clean_markdown`) + `reset_collection` (orphan fix) — RAG §14.
+- `[build-system]` + console scripts → `PYTHONPATH=src` eliminated — §13.
+- README rewritten (architecture, decisions table, roadmap).
+- App containerized: Dockerfile + compose `app` service — §11.
+- Eval accuracy threshold (≥0.9) instead of brittle per-case asserts.
+- `.gitignore` build junk.
+
+**❗ Still open — highest value first**
+
+1. **Automated refusal test.** Refusal was verified _manually_ in P2 ("Kubernetes ingress" → "I don't know") but is **NOT in `golden_qa.json`** → the safety property is still unverified _in automated eval_. Needs its own judge rubric (correct refusal = PASS, confident fabrication = FAIL). **The single highest-value remaining item.**
+2. **Provider-agnostic naming leak.** `settings.groq_api_key` / `GROQ_API_KEY` sits next to the generic `LLM_BASE_URL` / `LLM_MODEL`, and the README _explicitly claims_ provider-agnosticism. Rename → `LLM_API_KEY` across `.env`, `.env.example`, `config.py`. **The gap that most directly undercuts a claim the README makes.**
+3. **Mid-stream `error` event** (4th event type). Retry covers _establishment only_ (§10) — a failure after token 3 still kills the SSE socket with no structured signal. `try/except` inside the generator → `yield {"type": "error", ...}`.
+4. **`QDRANT_URL` in `.env`** — remove it; it's deployment topology, not user/provider config (§12).
+5. **`answer or ""` guard** in `generate_answer` — can be `None` while the type hint claims `str`. Same pattern for `.strip()` on possibly-`None` in `judge()`.
+6. **Empty-`choices` guard** in `stream_events` — `if part.choices and part.choices[0].delta.content`.
+7. **`_build_messages()` extraction** — prompt-building still duplicated between `generate_answer` and `stream_events` → prompt-drift risk.
+8. **`ruff format` / 4-space** — `generate.py` still mixes 2-space (old) and 4-space (`stream_events`). 30-second fix; makes it read as Python-native.
+9. **`reset_collection` on a fresh Qdrant** — `delete_collection` on a non-existent collection may 404 in some client versions. Verify first-run on a clean volume; guard with an existence check if needed.
+10. **Sources = retrieved, not used** — footer lists all `k`, not only cited passages.
+11. **Sync streaming caps concurrency** at ~threadpool size (§8). Async is the upgrade.
+12. **Component-level eval** — retrieval-only check keyed on expected source file, to isolate retrieval misses from generation misses.
+13. **Stronger/different judge model** — breaks the self-grading loop; trivial via the provider-agnostic layer.
+14. **Retrieval-quality upgrades** (roadmap) — structure-aware chunking, reranking / hybrid search. The 11/12 eval miss traces here.

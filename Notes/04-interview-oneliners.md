@@ -1,4 +1,4 @@
-# DocsRAG — Interview One-Liners (through Phase 4)
+# DocsRAG — Interview One-Liners (through Phase 5 — build complete)
 
 > Skim this before an interview. Just the load-bearing framings — the sentences that, said cleanly, prove you understand the _why_. Full reasoning lives in the other three docs.
 
@@ -68,8 +68,9 @@
 
 ## Re-ingestion / no duplicates
 
-- **"Same content → same deterministic ID → upsert overwrites in place rather than inserting. That's why 138 chunks stay 138, not 414."**
+- **"Same `filename:position` → same deterministic ID → upsert overwrites in place rather than inserting."**
 - "Deterministic IDs alone do nothing — it's the _pairing_ with upsert that de-duplicates. The idempotent collection setup is just hygiene."
+- **"But upsert prevents _duplicates_, not _orphans_ — when cleaning shrank the corpus, old high-position IDs became stale points upsert never revisits. That's why I moved to a full `reset_collection()`."**
 
 ## Chunk count
 
@@ -144,8 +145,53 @@
 - "`temperature=0` on the judge too — a flaky judge makes a flaky harness."
 - "`@pytest.mark.parametrize` makes each golden case an independent test — all run even if some fail, and failures name the exact question. Beats a loop that stops at the first failure."
 
+## Retries / resilience (Phase 5)
+
+- **"I retry only _transient_ failures — connection blips and 429s are recoverable; a bad request or bad API key fails identically every time, so retrying it just wastes time, adds load, and delays the inevitable error. Retrying a permanent error is a bug."**
+- "Exponential backoff because hammering a rate-limited service makes the rate-limiting _worse_ — backing off gives it room to recover."
+- "`reraise=True` so callers see the _original_ exception, not tenacity's wrapper — otherwise the retry abstraction leaks."
+- **"For a _streaming_ call, the retry protects _establishing_ the stream — a failure before the first token, where the user has seen nothing. It does NOT cover mid-iteration, because that exception fires in the `for` loop outside the decorated function. Retry to establish; error-event to fail gracefully once committed."**
+- "Retries assume idempotency — an LLM completion is safe to repeat; something with side effects wouldn't be."
+- "≈ Polly, decorator-style instead of a policy builder."
+
+## Index freshness / reset (Phase 5)
+
+- **"Upsert prevents duplicates but doesn't garbage-collect _orphans_. My IDs are keyed on `filename:position`, so when cleaning shrank the corpus, old high-position points became stale — upsert never revisits them. A full reset guarantees the index exactly matches the corpus."**
+- **"The cost of reset is a downtime window — a live system would fail queries mid-rebuild. The production answer is blue-green: build a new collection, swap the alias atomically."**
+- "Cleaning the data once at ingest is more robust than hoping the model ignores noise on every query."
+
+## The eval regression (LEAD WITH THIS)
+
+- **"My eval went 12/12 → 11/12 after a pipeline change — it caught a regression I'd otherwise have shipped blind. An eval that _catches_ something is far better evidence you built a real eval than one that only reports green."**
+- "The miss traces to a recall gap on rephrased queries — which is exactly where the theory predicts it: most RAG failures live in retrieval."
+
+## Containerization & networking (Phase 5)
+
+- **"'Containerized' doesn't mean everything in _one_ container — the unit is one service per container. Two containers, orchestrated by Compose into one command."**
+- "Why not one image? Qdrant is a pre-built official image that never changes; my app rebuilds constantly. Welding them together means rebuilding a database every time I edit a line of Python — and makes independent restart and scaling impossible."
+- **"`localhost` means 'the machine this process runs on' — and inside a container, that's _the container itself_. So the app container asking for `localhost:6333` looks for Qdrant inside itself and finds nothing."**
+- **"Compose gives a shared network with service-name DNS, so the app reaches Qdrant at `http://qdrant:6333`. Names, not IPs, because Docker assigns IPs dynamically — the name is the stable address."**
+- "In dev the app was native on my Mac, so `localhost:6333` worked _because_ of the `6333:6333` port mapping. Once the app moved into a container, that path was gone."
+- "`6333:6333` = host port : container port. The right side is fixed by the software; the left side is mine to choose."
+- "uvicorn binds `0.0.0.0`, not `localhost` — binding to localhost inside a container would refuse all external traffic."
+
+## Config / 12-factor (Phase 5)
+
+- **"Env vars outrank `.env`, which outranks the code default. So the same unchanged code talks to `localhost:6333` natively and `qdrant:6333` in Compose — config comes from the environment, not from code."**
+- "`vectorstore.py` never changed a line between the native and containerized deployments. That's the payoff of one typed settings object as the single source of truth."
+- "The clean split: `.env` = _who you are_ (secrets, provider); environment = _where you're running_ (deployment topology)."
+
 ---
 
 ## The three things I wrote by hand (and why)
 
-- `retrieve()` (Phase 2 ✅), the streaming `/ask` endpoint (Phase 3 ✅), the LLM-judge prompt (Phase 4 ✅) — implemented myself to internalize retrieval flow, streaming/async, and eval design rather than auto-generating them. All five phases build-complete; Phase 5 is polish.
+- `retrieve()` (Phase 2 ✅), the streaming `/ask` endpoint (Phase 3 ✅), the LLM-judge prompt (Phase 4 ✅) — implemented myself to internalize retrieval flow, streaming/async, and eval design rather than auto-generating them.
+
+## What I'd do next (know these cold — self-awareness is the signal)
+
+- **Automated refusal test** — refusal is verified manually but not in the golden set; the safety property is unverified in CI. Highest-value gap.
+- **Retrieval quality** — structure-aware chunking, reranking / hybrid search. The 11/12 miss traces here.
+- **Mid-stream error event** — retry covers establishment only.
+- **Async streaming** — removes the ~threadpool-size concurrency ceiling.
+- **Stronger/different judge model** — breaks the self-grading loop; a config change thanks to the provider-agnostic layer.
+- **Component-level eval** — isolate retrieval misses from generation misses.

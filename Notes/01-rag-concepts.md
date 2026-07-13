@@ -1,7 +1,7 @@
-# DocsRAG — RAG Concepts (through Phase 4)
+# DocsRAG — RAG Concepts (through Phase 5 — build complete)
 
 > Personal study notes. Goal: be able to defend every concept cold in an interview.
-> Scope: everything conceptual we've covered building DocsRAG — ingestion (P1), retrieval + generation (P2), streaming API (P3), eval harness (P4).
+> Scope: the full DocsRAG build — ingestion (P1), retrieval + generation (P2), streaming API (P3), eval harness (P4), polish + deployment (P5).
 
 ---
 
@@ -310,3 +310,42 @@ The golden set is 12 _answerable_ questions. The property we're proudest of — 
 ### How you'd make it diagnose the failing stage (follow-up)
 
 Add a **retrieval-only eval** keyed on expected source file: "did the right source doc appear in top-k?" — checkable _mechanically_, no LLM judge needed, because you know each golden answer's source. That isolates retrieval quality from generation quality (and is where the discarded retrieval **score** + stored **source metadata** would earn their keep).
+
+---
+
+## 14. Ingestion quality & index freshness (Phase 5)
+
+### Cleaning the corpus (data quality > model tolerance)
+
+The FastAPI docs embed build-time artifacts that aren't real content:
+
+- `{* ../../docs_src/... *}` — MkDocs code-include macros.
+- `{ #some-anchor }` — heading anchor tags.
+
+Phase 1 judged these "harmless"; Phase 5 **stripped them at ingest** (`clean_markdown()`, regex, before chunking). Why it's the right call: **cleaning the data once is more robust than hoping the model ignores noise on every query.** Noise in a chunk dilutes its embedding (the vector partly encodes junk) and wastes prompt space at generation. Fix the data, not the symptom.
+
+Effect: corpus shrank **138 → 124 chunks** (less junk text → fewer chunks).
+
+### The orphan problem — why upsert wasn't enough (KEY INSIGHT)
+
+The chunk ID is `uuid5(NAMESPACE_URL, f"{filename}:{position}")` — keyed on **filename + position**, _not_ content.
+
+- **Upsert overwrites points with matching IDs.** It does **not** delete points whose IDs stop being produced.
+- When cleaning shrank the corpus, some files now yield **fewer** chunks. Old high-position IDs (e.g. `body.md:9` when `body.md` now only reaches position 7) become **orphans** — stale points upsert never revisits and never removes.
+- Result: the index silently contains chunks that no longer reflect the source. **Silent staleness**, the worst kind of bug.
+
+> **Corrected Phase 1 story:** deterministic IDs + upsert prevents **duplicates**, but doesn't **garbage-collect orphans** when the chunk set changes. A **full reset** (drop + recreate, `reset_collection()`) guarantees the index exactly matches the current corpus.
+
+### The cost of reset — and the production answer
+
+- **Downside: a downtime window.** The collection is briefly gone during rebuild → a live system serving traffic would fail queries mid-reingest.
+- **Production-grade alternative: blue-green.** Build a _new_ collection alongside the old, then atomically **swap the alias**. Zero downtime.
+- **Trade made here:** reset is the right simplicity/robustness choice for a portfolio project. Knowing _why it wouldn't fly under live traffic_ is the depth signal.
+
+### The eval regression story (LEAD WITH THIS)
+
+Eval went **12/12 (P4) → 11/12 (P5)** after the pipeline changed; the miss traces to a **recall gap on rephrased queries**.
+
+> **The eval caught a regression I'd otherwise have shipped blind.** An eval that _catches_ something is far stronger evidence you built a real eval than one that only ever reports green. This is one of the best talking points in the whole project — don't hide it, lead with it.
+
+Fix direction (roadmap): structure-aware chunking, reranking / hybrid search — i.e. **retrieval-quality** upgrades, which is exactly where the RAG doc §1 claim ("most RAG failures live in retrieval") predicts the problem would be.

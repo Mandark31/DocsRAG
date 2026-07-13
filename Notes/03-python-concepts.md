@@ -1,4 +1,4 @@
-# DocsRAG — Python & Programming Concepts (through Phase 4)
+# DocsRAG — Python & Programming Concepts (through Phase 5 — build complete)
 
 > Personal study notes for a .NET dev learning Python/FastAPI.
 > C#/.NET analogies included where they genuinely fit; concept stated directly first.
@@ -286,3 +286,82 @@ GOLDEN = json.loads((Path(__file__).parent / "golden_qa.json").read_text())
 | non-`test_` helper (`judge`)     | private helper method                      |
 | fixtures (not used yet)          | ctor injection / `IClassFixture`           |
 | `uv run pytest`                  | `dotnet test`                              |
+
+---
+
+## 14. Decorators — and tenacity (Phase 5)
+
+### What a decorator actually is
+
+`@something` above a function **wraps** it: the decorator takes your function and returns a _new_ function with extra behavior around it. You've now used four:
+
+- `@lru_cache` — caches the return value (lazy singleton).
+- `@app.get` / `@app.post` — registers the function as a route.
+- `@pytest.mark.parametrize` — runs the function once per data item.
+- `@retry` — re-invokes the function on failure.
+
+≈ C# attributes **+** the behavior they trigger, fused. (In .NET an attribute is just metadata that _something else_ reads; a Python decorator both marks _and_ wraps.)
+
+### The tenacity retry decorator
+
+```python
+@retry(
+    retry=retry_if_exception_type((APIConnectionError, RateLimitError)),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    stop=stop_after_attempt(3),
+    reraise=True,
+)
+def chat(messages, *, model=None, **kwargs): ...
+```
+
+- **`retry=`** — _which_ exceptions to retry. Transient only. (Why: architecture §10.)
+- **`wait=`** — backoff schedule (1s → 2s → 4s, capped at 10s).
+- **`stop=`** — give up after 3 attempts.
+- **`reraise=True`** — re-raise the _original_ exception instead of tenacity's `RetryError` wrapper. Without it, callers see a tenacity type and the abstraction leaks.
+
+≈ **Polly** in .NET, decorator-style instead of a policy builder.
+
+### `*` and `**kwargs` in the signature
+
+```python
+def chat(messages: list[dict], *, model: str | None = None, **kwargs):
+```
+
+- **`*` (bare star)** — everything _after_ it is **keyword-only**. Callers must write `chat(msgs, model="x")`, never `chat(msgs, "x")`. Prevents accidental positional-arg bugs; makes call sites self-documenting.
+- **`**kwargs`** — collects any *other* keyword args into a dict and forwards them (`temperature=0.0`, `stream=True`) straight through to the SDK. This is how one `chat()` helper serves **both** the blocking and streaming call sites without duplicating a signature.
+- (≈ `params` + optional/named args, though Python's is more dynamic — `**kwargs` is a pass-through bag, not a typed overload.)
+
+---
+
+## 15. Packaging payoff — console scripts (Phase 5)
+
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+docsrag-ingest = "docsrag.ingest:main"
+```
+
+- `[build-system]` tells the tooling **how to build** the package (hatchling as the backend).
+- `[project.scripts]` declares **console entry points**: `name = "module:function"`. On install, each becomes a real command on your PATH that calls that function.
+- **The payoff:** the package now _installs properly_, so imports resolve by name and **`PYTHONPATH=src` is gone.** That's the src-layout story finally completing: declare the package location (§2) → build/install → import by name, no path hacks.
+- ≈ a `dotnet tool` / console entry point.
+
+### `if __name__ == "__main__":`
+
+Still present in `ingest.py`. It means "only run this when the file is executed _directly_, not when it's imported." ≈ a console app's `Main`. Now largely superseded by the console-script entry point, which calls `main()` directly — but harmless and still handy for `python -m docsrag.ingest`.
+
+---
+
+## 16. Regex quick note (Phase 5, `clean_markdown`)
+
+```python
+text = re.sub(r"\{\*.*?\*\}", "", text)      # {* ... *} include macros
+text = re.sub(r"\{\s*#[\w-]+\s*\}", "", text)  # { #heading-anchor }
+```
+
+- `re.sub(pattern, replacement, text)` — find all matches, replace them (here: with `""`, i.e. delete).
+- **`r"..."`** = raw string — backslashes are literal, so regex escapes (`\{`, `\s`, `\w`) don't need double-escaping. Always use raw strings for regex.
+- **`.*?`** = **non-greedy** match — stops at the _first_ `*}`, not the last. Greedy `.*` would swallow everything between the first `{*` and the _final_ `*}` in the file, nuking real content. The `?` is load-bearing.
