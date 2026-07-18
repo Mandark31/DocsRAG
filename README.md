@@ -14,7 +14,7 @@ The corpus in this repo is a curated set of [FastAPI](https://fastapi.tiangolo.c
 - **Retrieval** — embeds a query and returns the top-k chunks with scores and source attribution.
 - **Generation** — grounded answers with **inline numbered citations** (`[1]`, `[2]`…) and a Sources list; the model is instructed to decline rather than hallucinate when the corpus lacks the answer.
 - **API** — FastAPI app with a `/health` probe and a **streaming `POST /ask`** endpoint (Server-Sent Events: a `sources` event, then token-by-token, then `done`).
-- **Eval** — an LLM-judge harness grades a golden Q&A set for semantic correctness and asserts an accuracy threshold (currently 11/12 = 92%).
+- **Eval** — an LLM-judge harness grades a golden Q&A set for semantic correctness and asserts an accuracy threshold (≥0.9; currently 15/16 = 94% on the expanded 16-case set).
 - **Deployment** — the app is containerized; `docker compose up --build` brings up the API and Qdrant together.
 
 ## Architecture
@@ -148,7 +148,7 @@ DocsRAG/
 │   ├── search.py        # retrieval CLI
 │   └── ask.py           # cited-answer CLI
 ├── eval/
-│   ├── golden_qa.json   # 12 reference Q&A pairs
+│   ├── golden_qa.json   # 16 reference Q&A pairs
 │   └── test_eval.py     # LLM-judge harness + accuracy threshold
 ├── scripts/smoke_groq.py  # Phase 0 LLM connectivity check
 ├── data/                # corpus (FastAPI docs .md)
@@ -167,7 +167,17 @@ DocsRAG/
 - [x] **Phase 3** — Streaming `/ask` endpoint: grounded answers with inline citations via Groq (SSE)
 - [x] **Phase 4** — Eval harness: LLM-as-judge for answer correctness with an accuracy threshold
 - [x] **Phase 5** — Polish + deployment: LLM retries, ingest cleaning, console-script entry points, packaged install, app Dockerfile + Compose service, docs
-- [ ] **Later** — Structure-aware chunking, reranking / hybrid search (one eval miss traces to a recall gap on rephrased queries), retries on the vector store, semantic caching, input/output guardrails, request tracing and metrics
+- [ ] **Later** — Structure-aware chunking
+
+## Production hardening (eval-driven)
+
+Building the production layer one measurable improvement at a time — each on its own branch, each recording a before/after eval number so deltas stay apples-to-apples.
+
+- [x] **Phase 0 — Baseline & branch** — Expanded the golden set with 4 honest rephrased-query cases (12 → 16). **Baseline = 15/16 (94%).** The sole miss — `Path(gt=0)` numeric validation — is diagnosed as a _retrieval-side_ gap, not a generation one: the answering source `path-params-numeric-validations.md` never enters the top-5, crowded out in dense space by its lexical-cousin pages (`path-params.md`, `query-params.md`). This number anchors every later delta.
+- [ ] **Phase A — Hybrid search + reranking** — Add local sparse (BM25/SPLADE) retrieval alongside dense bge-small, fuse candidates via Qdrant's Query API (RRF), then cross-encoder rerank the fused top-N down to top-k before generation. Target: 15/16 → 16/16.
+- [ ] **Phase B — Semantic caching (Redis)** — Embedding-similarity answer cache with a configurable threshold + TTL and hit/miss accounting; bypassable in the eval run so it never masks correctness.
+- [ ] **Phase C — Observability (Langfuse)** — One trace per request with retrieve → rerank → generate spans: retrieval scores, chosen chunks, token counts, latency, and cost.
+- [ ] **Phase D — Guardrails** — Input prompt-injection screening (including indirect injection via poisoned chunks) and an output groundedness check that declines unsupported answers; plus tenacity retries on the Qdrant vector-store calls.
 
 ## License
 
