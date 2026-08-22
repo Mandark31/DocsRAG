@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_model: str = "llama-3.3-70b-versatile"
     llm_model_fallback: str = "llama-3.1-8b-instant"
+    sparse_model: str = "Qdrant/bm25"
+    reranker_model: str ="Xenova/ms-marco-MiniLM-L-6-v2"
+    retrieval_candidates: int = 20  # fused top-N handed to the reranker
 
     # Qdrant
     qdrant_url: str = "http://localhost:6333"

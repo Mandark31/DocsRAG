@@ -2,7 +2,7 @@ from pathlib import Path
 import re
 import uuid
 
-from docsrag.embeddings import embed_texts
+from docsrag.embeddings import embed_sparse_texts, embed_texts
 from docsrag.models import Chunk
 from docsrag.vectorstore import reset_collection, upsert_chunks
 
@@ -59,9 +59,11 @@ def build_chunks() -> list[Chunk]:
 
 def main() -> None:
   chunks = build_chunks()
-  vectors = embed_texts([c.text for c in chunks])
+  texts = [c.text for c in chunks]
+  dense_vectors = embed_texts(texts)
+  sparse_vectors = embed_sparse_texts(texts)
   reset_collection()
-  written = upsert_chunks(chunks, vectors)
+  written = upsert_chunks(chunks, dense_vectors, sparse_vectors)
   print(f"Upserted {written} point into Qdrant")
 
 if __name__ == "__main__":

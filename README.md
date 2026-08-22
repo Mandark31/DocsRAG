@@ -11,10 +11,10 @@ The corpus in this repo is a curated set of [FastAPI](https://fastapi.tiangolo.c
 ## What works today
 
 - **Ingestion** — reads `./data/*.md`, strips doc-build macros, chunks per file, embeds locally, and upserts into Qdrant. Re-ingestion is an idempotent full rebuild (no orphaned or duplicate vectors).
-- **Retrieval** — embeds a query and returns the top-k chunks with scores and source attribution.
+- **Retrieval** — hybrid recall (dense `bge-small` + BM25 sparse, RRF-fused via Qdrant's Query API) narrowed to the top-k by a local cross-encoder reranker, with scores and source attribution.
 - **Generation** — grounded answers with **inline numbered citations** (`[1]`, `[2]`…) and a Sources list; the model is instructed to decline rather than hallucinate when the corpus lacks the answer.
 - **API** — FastAPI app with a `/health` probe and a **streaming `POST /ask`** endpoint (Server-Sent Events: a `sources` event, then token-by-token, then `done`).
-- **Eval** — an LLM-judge harness grades a golden Q&A set for semantic correctness and asserts an accuracy threshold (≥0.9; currently 15/16 = 94% on the expanded 16-case set).
+- **Eval** — an LLM-judge harness grades a golden Q&A set for semantic correctness and asserts an accuracy threshold (≥0.9; currently 16/16 = 100% on the expanded 16-case set after Phase A hybrid search + reranking).
 - **Deployment** — the app is containerized; `docker compose up --build` brings up the API and Qdrant together.
 
 ## Architecture
@@ -174,7 +174,7 @@ DocsRAG/
 Building the production layer one measurable improvement at a time — each on its own branch, each recording a before/after eval number so deltas stay apples-to-apples.
 
 - [x] **Phase 0 — Baseline & branch** — Expanded the golden set with 4 honest rephrased-query cases (12 → 16). **Baseline = 15/16 (94%).** The sole miss — `Path(gt=0)` numeric validation — is diagnosed as a _retrieval-side_ gap, not a generation one: the answering source `path-params-numeric-validations.md` never enters the top-5, crowded out in dense space by its lexical-cousin pages (`path-params.md`, `query-params.md`). This number anchors every later delta.
-- [ ] **Phase A — Hybrid search + reranking** — Add local sparse (BM25/SPLADE) retrieval alongside dense bge-small, fuse candidates via Qdrant's Query API (RRF), then cross-encoder rerank the fused top-N down to top-k before generation. Target: 15/16 → 16/16.
+- [x] **Phase A — Hybrid search + reranking** — Dense `bge-small` + BM25 sparse (Qdrant named vectors, `Modifier.IDF`), fused with Reciprocal Rank Fusion via the Query API, then a local `Xenova/ms-marco-MiniLM-L-6-v2` cross-encoder reranks the fused top-20 down to top-5 before generation. **15/16 → 16/16.** The known miss (`Path(gt=0)`) resolved: `path-params-numeric-validations.md` went from never-retrieved to rank #1 — proof BM25 recovered the exact tokens dense embeddings blurred. _Caveat: Groq deprecated `llama-3.3-70b-versatile` mid-phase, so eval was re-scored under `openai/gpt-oss-120b` (both generator and judge). The retrieval-level diagnostic — the answering source now ranks #1 — is the model-independent evidence that the gain is real and not a judge artifact._
 - [ ] **Phase B — Semantic caching (Redis)** — Embedding-similarity answer cache with a configurable threshold + TTL and hit/miss accounting; bypassable in the eval run so it never masks correctness.
 - [ ] **Phase C — Observability (Langfuse)** — One trace per request with retrieve → rerank → generate spans: retrieval scores, chosen chunks, token counts, latency, and cost.
 - [ ] **Phase D — Guardrails** — Input prompt-injection screening (including indirect injection via poisoned chunks) and an output groundedness check that declines unsupported answers; plus tenacity retries on the Qdrant vector-store calls.
