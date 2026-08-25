@@ -1,4 +1,5 @@
 """DocsRAG HTTP API. Phase 0: health check & /ask streaming."""
+
 import json
 
 from fastapi import FastAPI
@@ -15,6 +16,7 @@ def health() -> dict[str, str]:
     """Liveness probe. ≈ a minimal ASP.NET health endpoint."""
     return {"status": "ok"}
 
+
 @app.post("/ask")
 def ask(request: AskRequest) -> StreamingResponse:
     """Stream a grounded, cited answer as Server-Sent Events."""
@@ -23,5 +25,5 @@ def ask(request: AskRequest) -> StreamingResponse:
         for event in stream_events(request.question, request.k):
             payload = json.dumps(event)
             yield f"data: {payload}\n\n"
-    
+
     return StreamingResponse(event_stream(), media_type="text/event-stream")

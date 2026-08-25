@@ -14,21 +14,22 @@ from fastembed.rerank.cross_encoder import TextCrossEncoder
 from docsrag.config import settings
 from docsrag.models import Chunk
 
- 
-@lru_cache(maxsize = 1)
-def _reranker() -> TextCrossEncoder: 
-  """One cross-encoder per process (lazy singleton), mirroring _model()."""
-  return TextCrossEncoder(model_name = settings.reranker_model)
+
+@lru_cache(maxsize=1)
+def _reranker() -> TextCrossEncoder:
+    """One cross-encoder per process (lazy singleton), mirroring _model()."""
+    return TextCrossEncoder(model_name=settings.reranker_model)
+
 
 def rerank(query: str, chunks: list[Chunk]) -> list[tuple[Chunk, float]]:
-  """Re-score `chunks` against `query`, most relevant first.
+    """Re-score `chunks` against `query`, most relevant first.
 
-  fastembed returns one score per document **in input order**, so the scores
-  must be zipped back onto their chunks before sorting. Higher = better.
-  """
-  if not chunks:
-    return []
-  scores = list(_reranker().rerank(query, [chunk.text for chunk in chunks]))
-  ranked = list(zip(chunks, scores))
-  ranked.sort(key = lambda pair: pair[1], reverse = True)
-  return ranked
+    fastembed returns one score per document **in input order**, so the scores
+    must be zipped back onto their chunks before sorting. Higher = better.
+    """
+    if not chunks:
+        return []
+    scores = list(_reranker().rerank(query, [chunk.text for chunk in chunks]))
+    ranked = list(zip(chunks, scores))
+    ranked.sort(key=lambda pair: pair[1], reverse=True)
+    return ranked

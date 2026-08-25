@@ -22,5 +22,5 @@ def retrieve(query: str, k: int = 5) -> list[Chunk]:
 
     candidates = hybrid_search(dense, sparse, limit=settings.retrieval_candidates)
     ranked = rerank(query, [chunk for chunk, _ in candidates])
-    
+
     return [chunk for chunk, _ in ranked[:k]]

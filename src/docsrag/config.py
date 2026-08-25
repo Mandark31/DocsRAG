@@ -1,4 +1,5 @@
 """Typed application settings, loaded from .env. (≈ IOptions<T> in .NET.)"""
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,7 +10,7 @@ class Settings(BaseSettings):
     llm_model: str = "openai/gpt-oss-120b"
     llm_model_fallback: str = "openai/gpt-oss-20b"
     sparse_model: str = "Qdrant/bm25"
-    reranker_model: str ="Xenova/ms-marco-MiniLM-L-6-v2"
+    reranker_model: str = "Xenova/ms-marco-MiniLM-L-6-v2"
     retrieval_candidates: int = 20  # fused top-N handed to the reranker
 
     # Qdrant
