@@ -65,7 +65,7 @@ def upsert_chunks(
             payload=chunk.model_dump(),
         )
         for chunk, dense, (indices, values) in zip(
-            chunks, dense_vectors, sparse_vectors
+            chunks, dense_vectors, sparse_vectors, strict=True
         )
     ]
     _client().upsert(collection_name=settings.qdrant_collection, points=points)

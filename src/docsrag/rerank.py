@@ -30,6 +30,6 @@ def rerank(query: str, chunks: list[Chunk]) -> list[tuple[Chunk, float]]:
     if not chunks:
         return []
     scores = list(_reranker().rerank(query, [chunk.text for chunk in chunks]))
-    ranked = list(zip(chunks, scores))
+    ranked = list(zip(chunks, scores, strict=True))
     ranked.sort(key=lambda pair: pair[1], reverse=True)
     return ranked
