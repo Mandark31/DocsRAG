@@ -46,5 +46,21 @@
   {
     "question": "How do I add metadata or validation to a Pydantic model's fields?",
     "expected": "Use Field from pydantic inside the model, e.g. price: float = Field(gt=0, description='...')."
+  },
+  {
+    "question": "If part of my URL is a variable, like an item's ID sitting inside the address, how do I capture it in my function?",
+    "expected": "Put the variable in the route using curly-brace format-string syntax, e.g. /items/{item_id}, and add a matching function parameter with a type annotation."
+  },
+  {
+    "question": "How can I stop users from passing an overly long search string to my endpoint?",
+    "expected": "Use Query as the parameter's default with a max_length constraint, e.g. q: str | None = Query(default=None, max_length=50)."
+  },
+  {
+    "question": "How do I make sure sensitive fields like a password never show up in what my API sends back?",
+    "expected": "Declare response_model on the path operation with a Pydantic model that omits those fields; FastAPI filters the output down to that model's fields."
+  },
+  {
+    "question": "How do I make my endpoint respond with a 404 when the requested record doesn't exist?",
+    "expected": "Raise HTTPException with status_code=404 and a detail message, e.g. raise HTTPException(status_code=404, detail='Item not found')."
   }
 ]
