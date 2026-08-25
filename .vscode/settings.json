@@ -1,0 +1,20 @@
+{
+  // Ruff owns formatting + lint fixes for Python; keep this in lockstep with
+  // the CLI (`uv run ruff format .` / `ruff check`) and pyproject.toml config.
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  // Use the ruff installed in the uv venv, not the extension's bundled copy,
+  // so the editor and CLI can never drift to different ruff versions.
+  "ruff.importStrategy": "fromEnvironment",
+
+  // Pylance stays the language server (IntelliSense, navigation). "basic"
+  // gives light in-editor type feedback; this is editor-only and does not
+  // add a CI gate (we chose Ruff-only tooling for now).
+  "python.analysis.typeCheckingMode": "basic"
+}
