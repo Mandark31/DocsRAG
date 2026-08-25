@@ -27,6 +27,7 @@ docsrag-ask = "docsrag.ask:main"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "ruff>=0.16.4",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -34,3 +35,25 @@ packages = ["src/docsrag"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["src"]
+extend-exclude = ["data", "Notes"]
+force-exclude = true
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (undefined names, unused imports)
+    "I",   # isort (import ordering)
+    "UP",  # pyupgrade (modernize to 3.12 syntax)
+    "B",   # flake8-bugbear (likely bugs)
+    "SIM", # flake8-simplify
+    "C4",  # flake8-comprehensions
+]
+ignore = ["E501"]  # line length is the formatter's job, not the linter's
+
+[tool.ruff.lint.isort]
+known-first-party = ["docsrag"]
